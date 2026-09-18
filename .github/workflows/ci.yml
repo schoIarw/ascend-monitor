@@ -22,7 +22,9 @@ jobs:
       - name: Resolve pinned dependencies
         run: go mod download
       - name: Formatting
-        run: test -z "$(gofmt -l cmd internal)"
+        run: |
+          gofmt -l cmd internal
+          test -z "$(gofmt -l cmd internal)"
       - name: Unit tests with race detector
         run: go test -race -count=1 ./...
       - name: Static analysis
