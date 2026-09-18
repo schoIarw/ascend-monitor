@@ -1,0 +1,5 @@
+/ascend-monitor
+*.env
+*.key
+*.log
+/dist/

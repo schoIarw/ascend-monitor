@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Resolve pinned dependencies
+        run: go mod download
+      - name: Formatting
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: Unit tests with race detector
+        run: go test -race -count=1 ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: CLI smoke test
+        run: |
+          go run ./cmd/ascend-monitor --version | grep -Fx 'ascend-monitor v0.1.0'
+          go run ./cmd/ascend-monitor --input sample.log --follow=false --ip 192.168.10.25 > smoke.out
+          grep -q '10.25' smoke.out
+          test "$(grep -c 'W:1' smoke.out)" -eq 2
+          if grep -q $'\033' smoke.out; then echo 'ANSI escapes leaked into redirected output'; exit 1; fi
+
+  build:
+    name: Linux ${{ matrix.arch }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - name: Build and package
+        env:
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o ascend-monitor ./cmd/ascend-monitor
+          tar -czf "dist/ascend-monitor_0.1.0_linux_${GOARCH}.tar.gz" ascend-monitor README.md sql/schema.sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ascend-monitor-linux-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish v0.1.0 after green CI
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ascend-monitor-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Checksum and publish once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ascend-monitor_0.1.0_linux_*.tar.gz > SHA256SUMS
+          if gh release view v0.1.0 >/dev/null 2>&1; then
+            echo 'v0.1.0 already exists; refusing to overwrite release'
+            exit 0
+          fi
+          gh release create v0.1.0 *.tar.gz SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title 'ascend-monitor v0.1.0' \
+            --notes 'Initial release: vLLM Docker metrics, highlighted waiting queue, redirection, and encrypted MySQL output. Linux amd64 and arm64.'
