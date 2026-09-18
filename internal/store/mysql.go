@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	driver "github.com/go-sql-driver/mysql"
 	"github.com/schoIarw/ascend-monitor/internal/monitor"
 	"github.com/schoIarw/ascend-monitor/internal/secret"
-	driver "github.com/go-sql-driver/mysql"
 )
 
 var dbNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
